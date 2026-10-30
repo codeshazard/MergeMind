@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import List, Optional
 from fastapi import HTTPException
@@ -83,7 +84,9 @@ async def analyze_diff_with_ai(
 
     last_error: Optional[Exception] = None
 
-    for attempt in range(2):
+    for attempt in range(3):
+        if attempt > 0:
+            await asyncio.sleep(2 * attempt)
         try:
             response = await client.aio.models.generate_content(
                 model=GEMINI_MODEL,

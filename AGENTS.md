@@ -59,6 +59,7 @@ class TestAssertion(BaseModel):
 class ResolvedFile(BaseModel):
     filename: str
     content: str
+    original_content: Optional[str] = None
 
 class AnalysisModel(BaseModel):
     model_config = ConfigDict(populate_by_name=True)

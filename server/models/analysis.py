@@ -24,6 +24,7 @@ class TestAssertion(BaseModel):
 class ResolvedFile(BaseModel):
     filename: str
     content: str
+    original_content: Optional[str] = None
 
 
 class AIResult(BaseModel):

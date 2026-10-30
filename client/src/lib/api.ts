@@ -1,3 +1,5 @@
+import type { Analysis, DashboardStats, IntegrateResponse } from './types';
+
 export class ApiError extends Error {
   status: number;
   data: unknown;
@@ -50,11 +52,20 @@ export async function apiFetch<T>(endpoint: string, options: RequestOptions = {}
     } catch {
       errorData = await response.text();
     }
-    throw new ApiError(
-      response.status,
-      `API request failed with status ${response.status}`,
-      errorData
-    );
+
+    let message = `API request failed with status ${response.status}`;
+    if (typeof errorData === 'object' && errorData !== null && 'detail' in errorData) {
+      const detail = (errorData as { detail: unknown }).detail;
+      if (typeof detail === 'string') {
+        message = detail;
+      } else if (Array.isArray(detail)) {
+        message = detail.map((d: { msg?: string }) => d.msg || JSON.stringify(d)).join('; ');
+      }
+    } else if (typeof errorData === 'string' && errorData) {
+      message = errorData;
+    }
+
+    throw new ApiError(response.status, message, errorData);
   }
 
   return response.json() as Promise<T>;
@@ -77,4 +88,31 @@ export const api = {
     }),
   delete: <T>(endpoint: string, options?: Omit<RequestOptions, 'method'>) =>
     apiFetch<T>(endpoint, { ...options, method: 'DELETE' }),
+
+  // Typed endpoints
+  scan: (repo_url: string, pr_number: number) =>
+    apiFetch<Analysis>('/api/scan', {
+      method: 'POST',
+      body: JSON.stringify({ repo_url, pr_number }),
+    }),
+
+  getHistory: (limit: number = 10) =>
+    apiFetch<Analysis[]>('/api/history', {
+      params: { limit },
+    }),
+
+  getAnalysis: (id: string) =>
+    apiFetch<Analysis>(`/api/analysis/${id}`),
+
+  integrate: (analysis_id: string) =>
+    apiFetch<IntegrateResponse>('/api/integrate', {
+      method: 'POST',
+      body: JSON.stringify({ analysis_id }),
+    }),
+
+  getStats: () =>
+    apiFetch<DashboardStats>('/api/dashboard/stats'),
+
+  getHealth: () =>
+    apiFetch<{ status: string; database: string }>('/api/health'),
 };

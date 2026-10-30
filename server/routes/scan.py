@@ -7,7 +7,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from db import get_db
 from models.analysis import AnalysisModel, FileDiff, ScanRequest, serialize_mongo_doc
 from utils.ai import analyze_diff_with_ai
-from utils.github import find_callers, get_pr, list_pr_files, parse_repo_url
+from utils.github import find_callers, get_file_content, get_pr, list_pr_files, parse_repo_url
 
 router = APIRouter(prefix="", tags=["Scan"])
 
@@ -54,6 +54,18 @@ async def scan_pull_request(
     # 4. Analyze diffs + context via Gemini LLM
     pr_title = pr.get("title", f"PR #{payload.pr_number}")
     ai_result = await analyze_diff_with_ai(pr_title, diff_files, context_files)
+
+    # 4b. Populate original_content for each resolved file
+    head_ref = pr.get("head", {}).get("sha") or pr.get("head", {}).get("ref", "")
+    changed_filenames_set = set(changed_filenames)
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        for rf in ai_result.resolved_files:
+            target_ref = head_ref if rf.filename in changed_filenames_set else base_sha
+            try:
+                orig_text, _ = await get_file_content(client, owner, repo, rf.filename, target_ref)
+                rf.original_content = orig_text
+            except Exception:
+                rf.original_content = None
 
     # 5. Build and persist Analysis document
     analysis = AnalysisModel(
