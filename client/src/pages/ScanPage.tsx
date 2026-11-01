@@ -2,7 +2,8 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Search, Loader2, ArrowRight, AlertCircle, RefreshCw, GitPullRequest, Calendar } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
-import type { Analysis } from '../lib/types';
+import { getAnalysisId, type Analysis } from '../lib/types';
+import { parsePrInput } from '../lib/parsePr';
 import { ConflictBadge, RiskBadge } from '../components/Badge';
 
 export const ScanPage: React.FC = () => {
@@ -34,47 +35,11 @@ export const ScanPage: React.FC = () => {
     };
   }, []);
 
-  const parseInput = (raw: string): { repo_url: string; pr_number: number } | null => {
-    const trimmed = raw.trim();
-    if (!trimmed) return null;
-
-    // Format 1: https://github.com/owner/repo/pull/123 (or http/github.com)
-    const urlMatch = trimmed.match(
-      /^(?:https?:\/\/)?(?:www\.)?github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:\/.*)?$/
-    );
-    if (urlMatch) {
-      return {
-        repo_url: `https://github.com/${urlMatch[1]}/${urlMatch[2]}`,
-        pr_number: parseInt(urlMatch[3], 10),
-      };
-    }
-
-    // Format 2: owner/repo#123
-    const shorthandMatch = trimmed.match(/^([^/\s]+)\/([^/#\s]+)#(\d+)$/);
-    if (shorthandMatch) {
-      return {
-        repo_url: `https://github.com/${shorthandMatch[1]}/${shorthandMatch[2]}`,
-        pr_number: parseInt(shorthandMatch[3], 10),
-      };
-    }
-
-    // Format 3: owner/repo/pull/123
-    const pathMatch = trimmed.match(/^([^/\s]+)\/([^/\s]+)\/pull\/(\d+)$/);
-    if (pathMatch) {
-      return {
-        repo_url: `https://github.com/${pathMatch[1]}/${pathMatch[2]}`,
-        pr_number: parseInt(pathMatch[3], 10),
-      };
-    }
-
-    return null;
-  };
-
   const handleScan = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
 
     setError(null);
-    const parsed = parseInput(inputVal);
+    const parsed = parsePrInput(inputVal);
     if (!parsed) {
       setError('Please provide a valid GitHub PR URL (e.g. https://github.com/owner/repo/pull/1) or shorthand owner/repo#1.');
       return;
@@ -100,7 +65,7 @@ export const ScanPage: React.FC = () => {
 
     try {
       const result = await api.scan(parsed.repo_url, parsed.pr_number);
-      const targetId = result._id || result.id;
+      const targetId = getAnalysisId(result);
       if (targetId) {
         navigate(`/analysis/${targetId}`);
       } else {
@@ -229,21 +194,19 @@ export const ScanPage: React.FC = () => {
           </div>
         ) : (
           <div className="border border-zinc-800/80 rounded-lg overflow-hidden divide-y divide-zinc-800/60 bg-zinc-900/40">
-            {recentScans.map((scan) => {
-              const scanId = scan._id || scan.id;
-              const formattedDate = new Date(scan.created_at).toLocaleDateString(undefined, {
-                month: 'short',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-              });
+            {recentScans.map((scan, idx) => {
+              const scanId = getAnalysisId(scan);
+              const formattedDate = scan.created_at
+                ? new Date(scan.created_at).toLocaleDateString(undefined, {
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })
+                : 'Recent';
 
-              return (
-                <Link
-                  key={scanId}
-                  to={`/analysis/${scanId}`}
-                  className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 hover:bg-zinc-900/90 transition-colors gap-3 group focus-ring"
-                >
+              const content = (
+                <>
                   <div className="flex items-start sm:items-center gap-3 min-w-0">
                     <div className="p-1.5 rounded bg-zinc-800/80 text-zinc-300 shrink-0">
                       <GitPullRequest className="w-3.5 h-3.5 text-zinc-400" aria-hidden="true" />
@@ -268,6 +231,27 @@ export const ScanPage: React.FC = () => {
                       {formattedDate}
                     </span>
                   </div>
+                </>
+              );
+
+              if (!scanId) {
+                return (
+                  <div
+                    key={`scan-${idx}`}
+                    className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 bg-zinc-900/40 text-zinc-400 gap-3"
+                  >
+                    {content}
+                  </div>
+                );
+              }
+
+              return (
+                <Link
+                  key={scanId}
+                  to={`/analysis/${scanId}`}
+                  className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 hover:bg-zinc-900/90 transition-colors gap-3 group focus-ring"
+                >
+                  {content}
                 </Link>
               );
             })}

@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Header } from './components/Header';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { ScanPage } from './pages/ScanPage';
 import { ResultPage } from './pages/ResultPage';
 import { HistoryPage } from './pages/HistoryPage';
@@ -14,7 +15,14 @@ export const App: React.FC = () => {
         <main className="flex-1">
           <Routes>
             <Route path="/" element={<ScanPage />} />
-            <Route path="/analysis/:id" element={<ResultPage />} />
+            <Route
+              path="/analysis/:id"
+              element={
+                <ErrorBoundary fallbackTitle="Inspection Detail Unavailable">
+                  <ResultPage />
+                </ErrorBoundary>
+              }
+            />
             <Route path="/history" element={<HistoryPage />} />
             <Route path="/analytics" element={<AnalyticsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />

@@ -1,6 +1,14 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import ReactDiffViewer from 'react-diff-viewer-continued';
+
+// Interop helper to resolve ReactDiffViewer whether bundled as ESM default or CJS module.exports.default
+const DiffViewer: React.ComponentType<any> =
+  typeof (ReactDiffViewer as any)?.default === 'function'
+    ? (ReactDiffViewer as any).default
+    : typeof ReactDiffViewer === 'function'
+    ? (ReactDiffViewer as any)
+    : (ReactDiffViewer as any)?.default?.default || (ReactDiffViewer as any)?.default || ReactDiffViewer;
 import {
   GitPullRequest,
   GitBranch,
@@ -16,6 +24,9 @@ import {
   AlertTriangle,
   FileText,
   Loader2,
+  FileQuestion,
+  History,
+  RotateCcw,
 } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
 import type { Analysis, IntegrateResponse } from '../lib/types';
@@ -26,6 +37,8 @@ export const ResultPage: React.FC = () => {
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isNotFound, setIsNotFound] = useState(false);
+  const [notFoundMessage, setNotFoundMessage] = useState<string | null>(null);
 
   // Diff viewer file tab
   const [activeFileIndex, setActiveFileIndex] = useState(0);
@@ -36,46 +49,62 @@ export const ResultPage: React.FC = () => {
   const [integrationResult, setIntegrationResult] = useState<IntegrateResponse | null>(null);
   const [copiedSha, setCopiedSha] = useState(false);
 
-  useEffect(() => {
-    if (!id) return;
-    let isMounted = true;
-    setLoading(true);
+  const isValidObjectId = (val?: string): boolean => {
+    return Boolean(val && /^[0-9a-fA-F]{24}$/.test(val.trim()));
+  };
 
-    api.getAnalysis(id)
+  const loadAnalysis = useCallback(() => {
+    if (!id || !isValidObjectId(id)) {
+      setIsNotFound(true);
+      setNotFoundMessage('Invalid analysis ID format. Inspection IDs must be 24-character hexadecimal strings.');
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    setIsNotFound(false);
+    setNotFoundMessage(null);
+
+    api.getAnalysis(id.trim())
       .then((data) => {
-        if (isMounted) {
-          setAnalysis(data);
-          setLoading(false);
-          // If already branch created, populate result view
-          if (data.integration_status === 'BRANCH_CREATED' && data.integration_branch) {
-            setIntegrationResult({
-              success: true,
-              branch: data.integration_branch,
-              commit_sha: 'HEAD',
-              files_committed: data.resolved_files.map((f) => f.filename),
-            });
-          }
+        setAnalysis(data);
+        setLoading(false);
+        // If already branch created, populate result view
+        if (data.integration_status === 'BRANCH_CREATED' && data.integration_branch) {
+          const files = (data.resolved_files ?? []).map((f) => f.filename);
+          setIntegrationResult({
+            success: true,
+            branch: data.integration_branch,
+            commit_sha: 'HEAD',
+            files_committed: files,
+          });
         }
       })
       .catch((err) => {
-        if (isMounted) {
+        setLoading(false);
+        if (err instanceof ApiError && (err.status === 400 || err.status === 404)) {
+          setIsNotFound(true);
+          setNotFoundMessage(err.message || 'The requested analysis record was not found.');
+        } else {
           setError(err instanceof Error ? err.message : 'Failed to load analysis details.');
-          setLoading(false);
         }
       });
-
-    return () => {
-      isMounted = false;
-    };
   }, [id]);
+
+  useEffect(() => {
+    loadAnalysis();
+  }, [loadAnalysis]);
 
   const handleIntegrate = async () => {
     if (!analysis || !id) return;
     setIntegrating(true);
     setError(null);
 
+    const resolved = analysis.resolved_files ?? [];
+
     try {
-      const res = await api.integrate(id);
+      const res = await api.integrate(id.trim());
       setIntegrationResult(res);
       setAnalysis({
         ...analysis,
@@ -91,7 +120,7 @@ export const ResultPage: React.FC = () => {
           success: true,
           branch: branchName,
           commit_sha: 'EXISTING',
-          files_committed: analysis.resolved_files.map((f) => f.filename),
+          files_committed: resolved.map((f) => f.filename),
         });
         setAnalysis({
           ...analysis,
@@ -149,48 +178,131 @@ export const ResultPage: React.FC = () => {
     },
   };
 
+  // 1. Loading Skeleton View
   if (loading) {
     return (
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-20 text-center">
-        <Loader2 className="w-8 h-8 animate-spin text-zinc-400 mx-auto mb-4" aria-hidden="true" />
-        <p className="text-sm font-mono text-zinc-400">Loading analysis record...</p>
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 space-y-8 animate-pulse" aria-busy="true" aria-label="Loading analysis">
+        <div className="flex items-center justify-between">
+          <div className="h-4 w-24 bg-zinc-800 rounded"></div>
+          <div className="h-5 w-24 bg-zinc-800 rounded"></div>
+        </div>
+        <div className="p-6 rounded-xl border border-zinc-800 bg-zinc-900/40 space-y-4">
+          <div className="flex flex-col sm:flex-row justify-between gap-4">
+            <div className="space-y-2">
+              <div className="h-3 w-40 bg-zinc-800 rounded"></div>
+              <div className="h-6 w-72 bg-zinc-800 rounded"></div>
+            </div>
+            <div className="flex gap-2">
+              <div className="h-6 w-20 bg-zinc-800 rounded"></div>
+              <div className="h-6 w-20 bg-zinc-800 rounded"></div>
+            </div>
+          </div>
+          <div className="h-4 w-52 bg-zinc-800/80 rounded"></div>
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 p-6 rounded-xl border border-zinc-800 bg-zinc-900/40 space-y-3">
+            <div className="h-4 w-48 bg-zinc-800 rounded"></div>
+            <div className="h-3 w-full bg-zinc-800/60 rounded"></div>
+            <div className="h-3 w-5/6 bg-zinc-800/60 rounded"></div>
+          </div>
+          <div className="p-6 rounded-xl border border-zinc-800 bg-zinc-900/40 space-y-3">
+            <div className="h-4 w-36 bg-zinc-800 rounded"></div>
+            <div className="h-12 w-full bg-zinc-800/60 rounded"></div>
+          </div>
+        </div>
+        <div className="h-64 rounded-xl border border-zinc-800 bg-zinc-950/60 flex items-center justify-center text-zinc-500 font-mono text-xs">
+          <Loader2 className="w-5 h-5 animate-spin mr-2 text-zinc-400" aria-hidden="true" />
+          <span>Loading split diff &amp; AST verification...</span>
+        </div>
       </div>
     );
   }
 
+  // 2. Scan Not Found View (Invalid ID or 400/404)
+  if (isNotFound) {
+    return (
+      <div className="max-w-2xl mx-auto px-4 py-20 text-center space-y-5">
+        <div className="w-12 h-12 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center mx-auto text-zinc-400">
+          <FileQuestion className="w-6 h-6 text-zinc-400" aria-hidden="true" />
+        </div>
+        <div>
+          <h1 className="text-xl font-bold text-zinc-100">Scan Not Found</h1>
+          <p className="text-xs text-zinc-400 mt-1.5 max-w-sm mx-auto">
+            {notFoundMessage || 'The requested analysis record does not exist or the identifier is invalid.'}
+          </p>
+        </div>
+        <div className="flex items-center justify-center gap-3 pt-2">
+          <Link
+            to="/history"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-zinc-100 text-zinc-950 hover:bg-white text-xs font-semibold transition-colors focus-ring"
+          >
+            <History className="w-3.5 h-3.5" aria-hidden="true" />
+            <span>Browse History</span>
+          </Link>
+          <Link
+            to="/"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-800 text-xs font-medium transition-colors focus-ring"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" aria-hidden="true" />
+            <span>New Scan</span>
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  // 3. Network or Server Error State with Retry
   if (error && !analysis) {
     return (
-      <div className="max-w-2xl mx-auto px-4 py-16 text-center">
-        <div className="p-4 rounded-lg border border-rose-500/30 bg-rose-500/10 text-rose-300 text-sm mb-6">
-          <p className="font-semibold mb-1">Failed to retrieve analysis</p>
+      <div className="max-w-2xl mx-auto px-4 py-20 text-center space-y-5">
+        <div className="p-4 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-300 text-xs">
+          <p className="font-semibold text-sm mb-1">Failed to retrieve analysis record</p>
           <p>{error}</p>
         </div>
-        <Link
-          to="/"
-          className="inline-flex items-center gap-2 text-xs font-medium text-zinc-300 hover:text-white px-4 py-2 rounded-md bg-zinc-900 border border-zinc-800 focus-ring"
-        >
-          <ArrowLeft className="w-3.5 h-3.5" aria-hidden="true" />
-          <span>Return to Scan</span>
-        </Link>
+        <div className="flex items-center justify-center gap-3 pt-2">
+          <button
+            type="button"
+            onClick={loadAnalysis}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-zinc-100 text-zinc-950 hover:bg-white text-xs font-semibold transition-colors focus-ring"
+          >
+            <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
+            <span>Retry</span>
+          </button>
+          <Link
+            to="/history"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-800 text-xs font-medium transition-colors focus-ring"
+          >
+            <History className="w-3.5 h-3.5" aria-hidden="true" />
+            <span>Back to History</span>
+          </Link>
+        </div>
       </div>
     );
   }
 
   if (!analysis) return null;
 
-  const currentResolvedFile = analysis.resolved_files[activeFileIndex] || analysis.resolved_files[0];
-  const isPrChangedFile = analysis.file_diffs.some((f) => f.filename === currentResolvedFile?.filename);
+  // Defensive array access & fallbacks
+  const resolvedFiles = analysis.resolved_files ?? [];
+  const currentResolvedFile = resolvedFiles[activeFileIndex] ?? resolvedFiles[0] ?? null;
+  const fileDiffs = analysis.file_diffs ?? [];
+  const isPrChangedFile = Boolean(
+    currentResolvedFile && fileDiffs.some((f) => f?.filename === currentResolvedFile?.filename)
+  );
+  const contextFiles = analysis.context_files ?? [];
+  const testAssertions = analysis.test_assertions ?? [];
+  const originalContent = currentResolvedFile?.original_content ?? null;
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 space-y-8">
       {/* Back button and breadcrumb */}
       <div className="flex items-center justify-between">
         <Link
-          to="/"
+          to="/history"
           className="inline-flex items-center gap-1.5 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors focus-ring rounded"
         >
           <ArrowLeft className="w-3.5 h-3.5" aria-hidden="true" />
-          <span>Back to Scan</span>
+          <span>Back to History</span>
         </Link>
 
         <div className="flex items-center gap-2">
@@ -225,7 +337,7 @@ export const ResultPage: React.FC = () => {
             <GitPullRequest className="w-3.5 h-3.5 text-zinc-500" aria-hidden="true" />
             <span>Target:</span>
             <span className="text-zinc-200 bg-zinc-800/80 px-1.5 py-0.5 rounded border border-zinc-700/60">
-              {analysis.base_branch}
+              {analysis.base_branch || 'main'}
             </span>
             <span>&larr;</span>
             <span className="text-zinc-200 bg-zinc-800/80 px-1.5 py-0.5 rounded border border-zinc-700/60">
@@ -234,7 +346,7 @@ export const ResultPage: React.FC = () => {
           </div>
 
           <div className="text-zinc-500">
-            Scanned on {new Date(analysis.created_at).toLocaleString()}
+            Scanned on {analysis.created_at ? new Date(analysis.created_at).toLocaleString() : 'N/A'}
           </div>
         </div>
       </div>
@@ -244,10 +356,10 @@ export const ResultPage: React.FC = () => {
         <div className="lg:col-span-2 p-6 rounded-xl border border-zinc-800 bg-zinc-900/40 space-y-3">
           <h2 className="text-sm font-semibold text-zinc-200 flex items-center gap-2">
             <FileText className="w-4 h-4 text-zinc-400" aria-hidden="true" />
-            <span>Conflict Root Cause & Analysis</span>
+            <span>Conflict Root Cause &amp; Analysis</span>
           </h2>
           <p className="text-sm text-zinc-300 leading-relaxed font-sans">
-            {analysis.explanation}
+            {analysis.explanation || 'No detailed conflict explanation provided for this record.'}
           </p>
         </div>
 
@@ -262,9 +374,9 @@ export const ResultPage: React.FC = () => {
               External files analyzed outside this PR:
             </p>
 
-            {analysis.context_files && analysis.context_files.length > 0 ? (
+            {contextFiles.length > 0 ? (
               <ul className="space-y-2">
-                {analysis.context_files.map((cf, idx) => (
+                {contextFiles.map((cf, idx) => (
                   <li
                     key={idx}
                     className="p-2.5 rounded bg-zinc-950/80 border border-zinc-800/80 text-xs font-mono"
@@ -282,7 +394,7 @@ export const ResultPage: React.FC = () => {
           </div>
 
           <div className="mt-4 pt-3 border-t border-zinc-800/80 text-[11px] text-zinc-500">
-            Caller-context AST extraction inspects functions & exports across the full base tree.
+            Caller-context AST extraction inspects functions &amp; exports across the full base tree.
           </div>
         </div>
       </div>
@@ -292,84 +404,94 @@ export const ResultPage: React.FC = () => {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <h2 id="diff-heading" className="text-sm font-semibold text-zinc-200 flex items-center gap-2">
             <FileCode className="w-4 h-4 text-zinc-400" aria-hidden="true" />
-            <span>Resolved Files & Split Diff</span>
+            <span>Resolved Files &amp; Split Diff</span>
           </h2>
 
           {/* File Tabs */}
-          <div className="flex flex-wrap items-center gap-1.5" role="tablist" aria-label="Resolved files">
-            {analysis.resolved_files.map((file, idx) => {
-              const isPr = analysis.file_diffs.some((f) => f.filename === file.filename);
-              const isActive = idx === activeFileIndex;
+          {resolvedFiles.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5" role="tablist" aria-label="Resolved files">
+              {resolvedFiles.map((file, idx) => {
+                const isPr = fileDiffs.some((f) => f?.filename === file.filename);
+                const isActive = idx === activeFileIndex;
 
-              return (
-                <button
-                  key={file.filename}
-                  role="tab"
-                  aria-selected={isActive}
-                  onClick={() => setActiveFileIndex(idx)}
-                  className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono transition-colors focus-ring border ${
-                    isActive
-                      ? 'bg-zinc-800 border-zinc-600 text-zinc-100 shadow-xs'
-                      : 'bg-zinc-900/60 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
-                  }`}
-                >
-                  <span className="truncate max-w-[160px]">{file.filename}</span>
-                  <span
-                    className={`text-[10px] px-1 py-0.2 rounded uppercase tracking-wider ${
-                      isPr ? 'bg-zinc-700/50 text-zinc-300' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                return (
+                  <button
+                    key={file.filename || idx}
+                    role="tab"
+                    aria-selected={isActive}
+                    onClick={() => setActiveFileIndex(idx)}
+                    className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono transition-colors focus-ring border ${
+                      isActive
+                        ? 'bg-zinc-800 border-zinc-600 text-zinc-100 shadow-xs'
+                        : 'bg-zinc-900/60 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
                     }`}
                   >
-                    {isPr ? 'PR' : 'Caller'}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+                    <span className="truncate max-w-[160px]">{file.filename}</span>
+                    <span
+                      className={`text-[10px] px-1 py-0.2 rounded uppercase tracking-wider ${
+                        isPr ? 'bg-zinc-700/50 text-zinc-300' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                      }`}
+                    >
+                      {isPr ? 'PR' : 'Caller'}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Diff Container */}
         <div className="rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden shadow-inner">
-          <div className="bg-zinc-900/90 border-b border-zinc-800 px-4 py-2.5 flex items-center justify-between text-xs font-mono">
-            <div className="flex items-center gap-2">
-              <span className="text-zinc-200 font-semibold">{currentResolvedFile?.filename}</span>
-              <span
-                className={`text-[11px] px-2 py-0.5 rounded ${
-                  isPrChangedFile
-                    ? 'bg-zinc-800 text-zinc-300 border border-zinc-700/80'
-                    : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
-                }`}
-              >
-                {isPrChangedFile ? 'Changed in PR' : 'Downstream Caller Repaired by MergeMind'}
-              </span>
+          {resolvedFiles.length === 0 ? (
+            <div className="p-8 text-center text-xs font-mono text-zinc-500">
+              No resolved file modifications recorded for this inspection.
             </div>
-
-            <div className="text-zinc-500 hidden sm:block">
-              {currentResolvedFile?.original_content ? 'Original vs MergeMind Clean Resolution' : 'Clean Resolution Only'}
-            </div>
-          </div>
-
-          <div className="overflow-x-auto text-xs font-mono">
-            {currentResolvedFile?.original_content !== undefined && currentResolvedFile?.original_content !== null ? (
-              <ReactDiffViewer
-                oldValue={currentResolvedFile.original_content}
-                newValue={currentResolvedFile.content}
-                splitView={true}
-                useDarkTheme={true}
-                styles={diffCustomStyles}
-                leftTitle="Original Source"
-                rightTitle="MergeMind Integrated Resolution"
-              />
-            ) : (
-              <div className="p-4 space-y-2">
-                <div className="p-2.5 rounded bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs font-sans">
-                  Original source content was not present on disk (newly generated file). Showing integrated content below:
+          ) : (
+            <>
+              <div className="bg-zinc-900/90 border-b border-zinc-800 px-4 py-2.5 flex items-center justify-between text-xs font-mono">
+                <div className="flex items-center gap-2">
+                  <span className="text-zinc-200 font-semibold">{currentResolvedFile?.filename}</span>
+                  <span
+                    className={`text-[11px] px-2 py-0.5 rounded ${
+                      isPrChangedFile
+                        ? 'bg-zinc-800 text-zinc-300 border border-zinc-700/80'
+                        : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+                    }`}
+                  >
+                    {isPrChangedFile ? 'Changed in PR' : 'Downstream Caller Repaired by MergeMind'}
+                  </span>
                 </div>
-                <pre className="p-4 bg-zinc-950 rounded text-zinc-200 text-xs overflow-x-auto">
-                  {currentResolvedFile?.content}
-                </pre>
+
+                <div className="text-zinc-500 hidden sm:block">
+                  {originalContent !== null ? 'Original vs MergeMind Clean Resolution' : 'Clean Resolution Only'}
+                </div>
               </div>
-            )}
-          </div>
+
+              <div className="overflow-x-auto text-xs font-mono">
+                {originalContent !== null ? (
+                  <DiffViewer
+                    oldValue={originalContent}
+                    newValue={currentResolvedFile?.content || ''}
+                    splitView={true}
+                    useDarkTheme={true}
+                    styles={diffCustomStyles}
+                    leftTitle="Original Source"
+                    rightTitle="MergeMind Integrated Resolution"
+                  />
+                ) : (
+                  <div className="p-4 space-y-2">
+                    <div className="p-2.5 rounded bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs font-sans">
+                      Original source content was not present on disk (newly generated file). Showing integrated content below:
+                    </div>
+                    <pre className="p-4 bg-zinc-950 rounded text-zinc-200 text-xs overflow-x-auto">
+                      {currentResolvedFile?.content || ''}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </div>
       </section>
 
@@ -386,31 +508,37 @@ export const ResultPage: React.FC = () => {
         </div>
 
         <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4 space-y-2.5 font-mono text-xs">
-          {analysis.test_assertions.map((item, idx) => (
-            <div
-              key={idx}
-              className="flex items-start sm:items-center justify-between p-2.5 rounded bg-zinc-900/60 border border-zinc-800/80 gap-3"
-            >
-              <div className="flex items-center gap-2.5 min-w-0">
-                {item.status === 'PASS' ? (
-                  <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" aria-hidden="true" />
-                ) : (
-                  <XCircle className="w-4 h-4 text-rose-400 shrink-0" aria-hidden="true" />
-                )}
-                <span className="text-zinc-200 truncate">{item.assertion}</span>
-              </div>
-
-              <span
-                className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
-                  item.status === 'PASS'
-                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                    : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                }`}
+          {testAssertions.length > 0 ? (
+            testAssertions.map((item, idx) => (
+              <div
+                key={idx}
+                className="flex items-start sm:items-center justify-between p-2.5 rounded bg-zinc-900/60 border border-zinc-800/80 gap-3"
               >
-                {item.status}
-              </span>
+                <div className="flex items-center gap-2.5 min-w-0">
+                  {item.status === 'PASS' ? (
+                    <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" aria-hidden="true" />
+                  ) : (
+                    <XCircle className="w-4 h-4 text-rose-400 shrink-0" aria-hidden="true" />
+                  )}
+                  <span className="text-zinc-200 truncate">{item.assertion}</span>
+                </div>
+
+                <span
+                  className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
+                    item.status === 'PASS'
+                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                      : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                  }`}
+                >
+                  {item.status}
+                </span>
+              </div>
+            ))
+          ) : (
+            <div className="text-zinc-500 text-xs py-2 text-center font-sans">
+              No indicative verification checks generated for this scan.
             </div>
-          ))}
+          )}
         </div>
       </section>
 
@@ -451,7 +579,7 @@ export const ResultPage: React.FC = () => {
               <div className="text-xs text-zinc-400">
                 <span>Committed files: </span>
                 <span className="text-zinc-200 font-mono">
-                  {integrationResult.files_committed.join(', ')}
+                  {(integrationResult.files_committed ?? []).join(', ') || 'None'}
                 </span>
               </div>
 
@@ -476,7 +604,7 @@ export const ResultPage: React.FC = () => {
                 MergeMind will create a new reference{' '}
                 <code className="text-zinc-200 font-mono">mergemind/patch-pr-{analysis.pr_number}</code> on{' '}
                 <span className="text-zinc-200">{analysis.repo_owner}/{analysis.repo_name}</span> and commit all{' '}
-                {analysis.resolved_files.length} clean resolved files.
+                {resolvedFiles.length} clean resolved files.
               </p>
             </div>
 
@@ -501,7 +629,7 @@ export const ResultPage: React.FC = () => {
                 ) : (
                   <>
                     <GitBranch className="w-3.5 h-3.5" aria-hidden="true" />
-                    <span>Confirm & Push Branch</span>
+                    <span>Confirm &amp; Push Branch</span>
                   </>
                 )}
               </button>
@@ -533,7 +661,7 @@ export const ResultPage: React.FC = () => {
               className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg bg-zinc-100 text-zinc-950 hover:bg-white active:bg-zinc-200 text-xs font-bold transition-colors focus-ring shrink-0"
             >
               <GitBranch className="w-3.5 h-3.5 text-zinc-950" aria-hidden="true" />
-              <span>Approve & Create Integration Branch</span>
+              <span>Approve &amp; Create Integration Branch</span>
             </button>
           </div>
         )}

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { GitPullRequest, ArrowRight, Loader2, Calendar, GitBranch } from 'lucide-react';
 import { api } from '../lib/api';
-import type { Analysis } from '../lib/types';
+import { getAnalysisId, type Analysis } from '../lib/types';
 import { ConflictBadge, RiskBadge, IntegrationBadge } from '../components/Badge';
 
 export const HistoryPage: React.FC = () => {
@@ -34,13 +34,13 @@ export const HistoryPage: React.FC = () => {
     };
   }, []);
 
-  const handleRowClick = (id?: string) => {
+  const handleRowClick = (id: string | null) => {
     if (id) {
       navigate(`/analysis/${id}`);
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent, id?: string) => {
+  const handleKeyDown = (e: React.KeyboardEvent, id: string | null) => {
     if ((e.key === 'Enter' || e.key === ' ') && id) {
       e.preventDefault();
       navigate(`/analysis/${id}`);
@@ -108,24 +108,18 @@ export const HistoryPage: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800/60">
-                {analyses.map((scan) => {
-                  const targetId = scan._id || scan.id;
-                  const dateStr = new Date(scan.created_at).toLocaleDateString(undefined, {
-                    month: 'short',
-                    day: 'numeric',
-                    year: 'numeric',
-                  });
+                {analyses.map((scan, idx) => {
+                  const targetId = getAnalysisId(scan);
+                  const dateStr = scan.created_at
+                    ? new Date(scan.created_at).toLocaleDateString(undefined, {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                      })
+                    : 'Recent';
 
-                  return (
-                    <tr
-                      key={targetId}
-                      tabIndex={0}
-                      onClick={() => handleRowClick(targetId)}
-                      onKeyDown={(e) => handleKeyDown(e, targetId)}
-                      className="hover:bg-zinc-800/50 cursor-pointer transition-colors focus-ring"
-                      role="link"
-                      aria-label={`View analysis for ${scan.repo_owner}/${scan.repo_name} PR #${scan.pr_number}: ${scan.pr_title}`}
-                    >
+                  const cells = (
+                    <>
                       <td className="py-3.5 px-4">
                         <div className="flex items-center gap-2">
                           <span className="font-mono text-zinc-400">
@@ -149,7 +143,7 @@ export const HistoryPage: React.FC = () => {
                         <div className="flex items-center gap-2">
                           <IntegrationBadge status={scan.integration_status} size="sm" />
                           {scan.integration_branch && (
-                            <span className="font-mono text-[10px] text-zinc-500 hidden sm:inline flex items-center gap-1">
+                            <span className="font-mono text-[10px] text-zinc-500 hidden sm:inline-flex items-center gap-1">
                               <GitBranch className="w-3 h-3 text-zinc-600" aria-hidden="true" />
                               {scan.integration_branch}
                             </span>
@@ -163,6 +157,32 @@ export const HistoryPage: React.FC = () => {
                           {dateStr}
                         </span>
                       </td>
+                    </>
+                  );
+
+                  if (!targetId) {
+                    return (
+                      <tr
+                        key={`unidentified-${idx}`}
+                        className="bg-zinc-900/20 text-zinc-400"
+                        aria-label={`Unidentified analysis for ${scan.repo_owner}/${scan.repo_name} PR #${scan.pr_number}`}
+                      >
+                        {cells}
+                      </tr>
+                    );
+                  }
+
+                  return (
+                    <tr
+                      key={targetId}
+                      tabIndex={0}
+                      onClick={() => handleRowClick(targetId)}
+                      onKeyDown={(e) => handleKeyDown(e, targetId)}
+                      className="hover:bg-zinc-800/50 cursor-pointer transition-colors focus-ring"
+                      role="link"
+                      aria-label={`View analysis for ${scan.repo_owner}/${scan.repo_name} PR #${scan.pr_number}: ${scan.pr_title}`}
+                    >
+                      {cells}
                     </tr>
                   );
                 })}

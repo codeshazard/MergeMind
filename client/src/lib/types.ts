@@ -27,7 +27,7 @@ export interface TestAssertion {
 }
 
 export interface Analysis {
-  _id?: string;
+  _id: string;
   id?: string;
   repo_owner: string;
   repo_name: string;
@@ -45,6 +45,18 @@ export interface Analysis {
   integration_status: IntegrationStatus;
   integration_branch?: string | null;
   created_at: string;
+}
+
+/**
+ * Universal helper to extract a clean string Mongo ID from an Analysis record.
+ * Handles _id and id defensively, returning null if missing or empty.
+ */
+export function getAnalysisId(a: { _id?: string; id?: string } | null | undefined): string | null {
+  if (!a) return null;
+  const rawId = a._id ?? a.id;
+  if (!rawId || typeof rawId !== 'string') return null;
+  const trimmed = rawId.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 export interface BreakdownItem {
