@@ -27,6 +27,9 @@ import {
   FileQuestion,
   History,
   RotateCcw,
+  AlertCircle,
+  Info,
+  HelpCircle,
 } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
 import type { Analysis, IntegrateResponse } from '../lib/types';
@@ -293,6 +296,21 @@ export const ResultPage: React.FC = () => {
   const testAssertions = analysis.test_assertions ?? [];
   const originalContent = currentResolvedFile?.original_content ?? null;
 
+  // Separate root explanation and assumption to confirm
+  const parseExplanationAndAssumption = (text: string) => {
+    if (!text) return { rootExplanation: '', assumption: null };
+    const marker = /(?:Assumption to confirm:?|\*\*Assumption to confirm:?\*\*)/i;
+    const match = text.match(marker);
+    if (match && match.index !== undefined) {
+      const rootExplanation = text.slice(0, match.index).trim();
+      const assumption = text.slice(match.index + match[0].length).trim();
+      return { rootExplanation: rootExplanation || text, assumption: assumption || null };
+    }
+    return { rootExplanation: text, assumption: null };
+  };
+
+  const { rootExplanation, assumption } = parseExplanationAndAssumption(analysis.explanation || '');
+
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 space-y-8">
       {/* Back button and breadcrumb */}
@@ -332,6 +350,21 @@ export const ResultPage: React.FC = () => {
           </div>
         </div>
 
+        {/* State Notice & Truncation Warnings */}
+        {analysis.conflict_type === 'TEXTUAL' && analysis.github_mergeable_state === 'dirty' && (
+          <div className="flex items-center gap-2 px-3.5 py-2 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs font-medium">
+            <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" aria-hidden="true" />
+            <span>GitHub reports merge conflicts on this PR</span>
+          </div>
+        )}
+
+        {analysis.truncated && (
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs">
+            <Info className="w-3.5 h-3.5 shrink-0 text-amber-400" aria-hidden="true" />
+            <span>Analysis input was truncated to fit context limits.</span>
+          </div>
+        )}
+
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs font-mono text-zinc-400">
           <div className="flex items-center gap-1.5">
             <GitPullRequest className="w-3.5 h-3.5 text-zinc-500" aria-hidden="true" />
@@ -353,14 +386,30 @@ export const ResultPage: React.FC = () => {
 
       {/* Explanation Block + Caller Context Callout */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 p-6 rounded-xl border border-zinc-800 bg-zinc-900/40 space-y-3">
-          <h2 className="text-sm font-semibold text-zinc-200 flex items-center gap-2">
-            <FileText className="w-4 h-4 text-zinc-400" aria-hidden="true" />
-            <span>Conflict Root Cause &amp; Analysis</span>
-          </h2>
-          <p className="text-sm text-zinc-300 leading-relaxed font-sans">
-            {analysis.explanation || 'No detailed conflict explanation provided for this record.'}
-          </p>
+        <div className="lg:col-span-2 p-6 rounded-xl border border-zinc-800 bg-zinc-900/40 space-y-4">
+          <div>
+            <h2 className="text-sm font-semibold text-zinc-200 flex items-center gap-2 mb-2">
+              <FileText className="w-4 h-4 text-zinc-400" aria-hidden="true" />
+              <span>Conflict Root Cause &amp; Analysis</span>
+            </h2>
+            <p className="text-sm text-zinc-300 leading-relaxed font-sans">
+              {rootExplanation || 'No detailed conflict explanation provided for this record.'}
+            </p>
+          </div>
+
+          {/* Assumption to confirm (for TEXTUAL and SEMANTIC conflicts) */}
+          {analysis.conflict_type !== 'NONE' && (
+            <div className="p-4 rounded-lg bg-zinc-950/70 border border-amber-500/30 space-y-1.5 animate-in fade-in duration-200">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                <HelpCircle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                <span>Assumption to confirm</span>
+              </h3>
+              <p className="text-xs text-zinc-300 leading-relaxed font-sans">
+                {assumption ||
+                  'The synthesized resolution assumes the new signature/behavior was intentional and updates downstream callers accordingly. Confirm with the PR author whether caller expectations should be adapted or if original semantics must be preserved.'}
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Proof of Caller-Context Detection */}

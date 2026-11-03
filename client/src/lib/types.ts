@@ -44,6 +44,8 @@ export interface Analysis {
   test_assertions: TestAssertion[];
   integration_status: IntegrationStatus;
   integration_branch?: string | null;
+  github_mergeable_state?: string | null;
+  truncated?: boolean;
   created_at: string;
 }
 

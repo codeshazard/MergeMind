@@ -1,9 +1,21 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Search, Loader2, ArrowRight, AlertCircle, RefreshCw, GitPullRequest, Calendar } from 'lucide-react';
+import {
+  Search,
+  Loader2,
+  ArrowRight,
+  AlertCircle,
+  RefreshCw,
+  GitPullRequest,
+  Calendar,
+  Copy,
+  Check,
+  Sparkles,
+} from 'lucide-react';
 import { api, ApiError } from '../lib/api';
 import { getAnalysisId, type Analysis } from '../lib/types';
 import { parsePrInput } from '../lib/parsePr';
+import { DEMO_PR_PRESETS, type DemoPrPreset } from '../lib/constants';
 import { ConflictBadge, RiskBadge } from '../components/Badge';
 
 export const ScanPage: React.FC = () => {
@@ -14,6 +26,7 @@ export const ScanPage: React.FC = () => {
   const [progressStep, setProgressStep] = useState<string>('');
   const [recentScans, setRecentScans] = useState<Analysis[]>([]);
   const [recentLoading, setRecentLoading] = useState(true);
+  const [copiedPresetId, setCopiedPresetId] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   useEffect(() => {
@@ -35,6 +48,20 @@ export const ScanPage: React.FC = () => {
     };
   }, []);
 
+  const handleCopyUrl = (preset: DemoPrPreset, e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(preset.url);
+    setCopiedPresetId(preset.id);
+    setTimeout(() => {
+      setCopiedPresetId(null);
+    }, 2000);
+  };
+
+  const handleSelectPreset = (url: string) => {
+    setInputVal(url);
+    setError(null);
+  };
+
   const handleScan = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
 
@@ -52,7 +79,7 @@ export const ScanPage: React.FC = () => {
     timerRef.current.forEach(clearTimeout);
     timerRef.current = [];
 
-    // Stage progression
+    // Stage progression feedback
     const t1 = setTimeout(() => {
       setProgressStep('Traversing repository tree & finding callers...');
     }, 2000);
@@ -121,7 +148,7 @@ export const ScanPage: React.FC = () => {
           <button
             type="submit"
             disabled={loading || !inputVal.trim()}
-            className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-zinc-100 text-zinc-950 hover:bg-white active:bg-zinc-200 text-xs font-semibold rounded-lg transition-colors focus-ring disabled:opacity-40 disabled:pointer-events-none shrink-0"
+            className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-zinc-100 text-zinc-950 hover:bg-white active:bg-zinc-200 text-xs font-semibold rounded-lg transition-colors focus-ring disabled:opacity-40 disabled:pointer-events-none shrink-0 cursor-pointer"
           >
             {loading ? (
               <>
@@ -151,7 +178,7 @@ export const ScanPage: React.FC = () => {
             <button
               type="button"
               onClick={() => handleScan()}
-              className="text-xs font-medium text-rose-200 hover:text-white underline inline-flex items-center gap-1 shrink-0 focus-ring rounded"
+              className="text-xs font-medium text-rose-200 hover:text-white underline inline-flex items-center gap-1 shrink-0 focus-ring rounded cursor-pointer"
             >
               <RefreshCw className="w-3 h-3" aria-hidden="true" />
               <span>Retry</span>
@@ -170,8 +197,65 @@ export const ScanPage: React.FC = () => {
         </div>
       </form>
 
+      {/* Preset Demo PRs Shortcut List */}
+      <div className="mt-4 p-4 rounded-xl border border-zinc-800/80 bg-zinc-900/40 space-y-3">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
+            <Sparkles className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" />
+            <span>Preset Demo PR Shortcuts</span>
+          </span>
+          <span className="text-[11px] text-zinc-500">Click to load or copy URL</span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+          {DEMO_PR_PRESETS.map((preset) => {
+            const isCopied = copiedPresetId === preset.id;
+            return (
+              <div
+                key={preset.id}
+                onClick={() => handleSelectPreset(preset.url)}
+                className="group relative p-3 rounded-lg border border-zinc-800/80 bg-zinc-950/60 hover:bg-zinc-900 hover:border-zinc-700 transition-all cursor-pointer flex flex-col justify-between"
+              >
+                <div>
+                  <div className="flex items-center justify-between gap-1 mb-1">
+                    <span className="text-xs font-semibold text-zinc-200 font-mono group-hover:text-white truncate">
+                      {preset.label}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => handleCopyUrl(preset, e)}
+                      title="Copy PR URL"
+                      className="p-1 rounded bg-zinc-800/80 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-100 transition-colors shrink-0 focus-ring cursor-pointer"
+                      aria-label={`Copy ${preset.label} URL`}
+                    >
+                      {isCopied ? (
+                        <Check className="w-3 h-3 text-emerald-400" aria-hidden="true" />
+                      ) : (
+                        <Copy className="w-3 h-3" aria-hidden="true" />
+                      )}
+                    </button>
+                  </div>
+                  <div className="text-[11px] text-zinc-400 leading-snug line-clamp-2">
+                    {preset.description}
+                  </div>
+                </div>
+
+                <div className="mt-2.5 flex items-center justify-between text-[10px]">
+                  <span className="px-1.5 py-0.5 rounded border border-zinc-700/60 bg-zinc-800/60 text-zinc-300 font-mono">
+                    {preset.badge}
+                  </span>
+                  <span className="text-zinc-500 group-hover:text-zinc-300 transition-colors flex items-center gap-0.5">
+                    {isCopied ? 'Copied!' : 'Use PR \u2192'}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Recent Scans Section */}
-      <section className="mt-14 border-t border-zinc-800/80 pt-8" aria-labelledby="recent-heading">
+      <section className="mt-12 border-t border-zinc-800/80 pt-8" aria-labelledby="recent-heading">
         <div className="flex items-center justify-between mb-4">
           <h2 id="recent-heading" className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
             Recent Inspections
@@ -190,7 +274,9 @@ export const ScanPage: React.FC = () => {
           </div>
         ) : recentScans.length === 0 ? (
           <div className="p-6 rounded-lg border border-dashed border-zinc-800 text-center">
-            <p className="text-xs text-zinc-500">No PR scans performed yet. Enter a GitHub PR above to start.</p>
+            <p className="text-xs text-zinc-500">
+              No PR scans performed yet. Enter a GitHub PR above or try a demo shortcut to start.
+            </p>
           </div>
         ) : (
           <div className="border border-zinc-800/80 rounded-lg overflow-hidden divide-y divide-zinc-800/60 bg-zinc-900/40">

@@ -30,7 +30,6 @@ export const AnalyticsPage: React.FC = () => {
 
   useEffect(() => {
     let isMounted = true;
-    setLoading(true);
 
     api.getStats()
       .then((data) => {

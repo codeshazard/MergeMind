@@ -56,6 +56,8 @@ class AnalysisModel(BaseModel):
     test_assertions: List[TestAssertion]
     integration_status: Literal["PENDING", "BRANCH_CREATED", "REJECTED"] = "PENDING"
     integration_branch: Optional[str] = None
+    github_mergeable_state: Optional[str] = None
+    truncated: bool = False
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 

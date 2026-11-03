@@ -132,8 +132,4 @@ export const IntegrationBadge: React.FC<IntegrationBadgeProps> = ({ status, size
   }
 };
 
-export default {
-  ConflictBadge,
-  RiskBadge,
-  IntegrationBadge,
-};
+

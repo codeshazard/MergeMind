@@ -13,7 +13,6 @@ export const HistoryPage: React.FC = () => {
 
   useEffect(() => {
     let isMounted = true;
-    setLoading(true);
 
     api.getHistory(50)
       .then((data) => {

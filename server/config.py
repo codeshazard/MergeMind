@@ -8,7 +8,7 @@ load_dotenv(dotenv_path=env_path)
 MONGODB_URI: str = os.getenv("MONGODB_URI", "")
 GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
 PORT: int = int(os.getenv("PORT", "8000"))
 
 missing = []

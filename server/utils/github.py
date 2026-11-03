@@ -7,6 +7,22 @@ import httpx
 
 from config import GITHUB_TOKEN
 from models.analysis import ContextFile
+from utils.rules import (
+    check_file_caller,
+    extract_called_identifiers,
+    extract_changed_identifiers,
+    extract_module_names,
+    matches_definition,
+)
+
+# Standard HTTP client timeout configuration
+HTTP_TIMEOUT = httpx.Timeout(20.0, connect=5.0)
+
+SOURCE_EXTS = (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".py")
+SKIP_SUBSTRINGS = (
+    "node_modules/", "dist/", "build/", ".git/", ".venv/", "venv/",
+    "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+)
 
 
 def get_github_headers() -> Dict[str, str]:
@@ -49,10 +65,22 @@ def _handle_github_error(response: httpx.Response) -> None:
 
 
 async def get_pr(client: httpx.AsyncClient, owner: str, repo: str, pull_number: int) -> Dict[str, Any]:
+    """
+    Fetch PR details. If GitHub has not computed 'mergeable' yet (null),
+    retry up to 3 times with a 1-second delay.
+    """
     url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pull_number}"
-    resp = await client.get(url, headers=get_github_headers())
-    _handle_github_error(resp)
-    return resp.json()
+    data: Dict[str, Any] = {}
+
+    for attempt in range(4):  # initial call + up to 3 retries
+        resp = await client.get(url, headers=get_github_headers(), timeout=HTTP_TIMEOUT)
+        _handle_github_error(resp)
+        data = resp.json()
+        if data.get("mergeable") is not None or attempt == 3:
+            break
+        await asyncio.sleep(1.0)
+
+    return data
 
 
 async def list_pr_files(
@@ -68,6 +96,7 @@ async def list_pr_files(
             url,
             headers=get_github_headers(),
             params={"page": page, "per_page": per_page},
+            timeout=HTTP_TIMEOUT,
         )
         _handle_github_error(resp)
         page_files = resp.json()
@@ -85,7 +114,9 @@ async def get_file_content(
 ) -> Tuple[str, str]:
     """Fetch file content from GitHub repository at a specific ref. Returns (text, sha)."""
     url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}"
-    resp = await client.get(url, headers=get_github_headers(), params={"ref": ref})
+    resp = await client.get(url, headers=get_github_headers(), params={"ref": ref}, timeout=HTTP_TIMEOUT)
+    if resp.status_code == 404:
+        return "", ""
     _handle_github_error(resp)
     data = resp.json()
     sha = data.get("sha", "")
@@ -102,49 +133,15 @@ async def get_repo_tree(
 ) -> List[Dict[str, Any]]:
     """Fetch recursive git tree at ref."""
     url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/{ref}"
-    resp = await client.get(url, headers=get_github_headers(), params={"recursive": "1"})
+    resp = await client.get(
+        url,
+        headers=get_github_headers(),
+        params={"recursive": "1"},
+        timeout=HTTP_TIMEOUT,
+    )
     _handle_github_error(resp)
     data = resp.json()
     return data.get("tree", [])
-
-
-def extract_changed_identifiers(patches: List[str]) -> Set[str]:
-    """Extract modified function, class, and variable identifiers from diff patches."""
-    identifiers: Set[str] = set()
-    keywords = {
-        "if", "else", "elif", "for", "while", "try", "except", "finally", "with",
-        "return", "yield", "pass", "break", "continue", "import", "from", "as",
-        "def", "class", "async", "await", "function", "const", "let", "var", "export",
-        "default", "interface", "type", "true", "false", "null", "undefined", "none",
-        "self", "this", "new", "throw", "catch", "case", "switch", "match", "test",
-    }
-
-    # Patterns for added/removed lines
-    js_patterns = [
-        re.compile(r"(?:export\s+)?(?:default\s+)?function\s+([A-Za-z0-9_$]+)"),
-        re.compile(r"(?:export\s+)?(?:const|let|var)\s+([A-Za-z0-9_$]+)\s*="),
-        re.compile(r"(?:export\s+)?class\s+([A-Za-z0-9_$]+)"),
-    ]
-    py_patterns = [
-        re.compile(r"(?:async\s+)?def\s+([A-Za-z0-9_]+)\s*\("),
-        re.compile(r"class\s+([A-Za-z0-9_]+)\s*[:\(]"),
-    ]
-
-    for patch in patches:
-        if not patch:
-            continue
-        for line in patch.splitlines():
-            # Check added or removed lines only (skip diff headers +++ and ---)
-            if not ((line.startswith("+") and not line.startswith("+++")) or (line.startswith("-") and not line.startswith("---"))):
-                continue
-            code_line = line[1:].strip()
-            for pattern in js_patterns + py_patterns:
-                for match in pattern.finditer(code_line):
-                    ident = match.group(1).strip()
-                    if ident and len(ident) > 2 and ident.lower() not in keywords:
-                        identifiers.add(ident)
-
-    return identifiers
 
 
 async def find_callers(
@@ -155,21 +152,20 @@ async def find_callers(
     changed_files: List[str],
     patches: List[str],
 ) -> List[ContextFile]:
-    """Find source files outside the PR that reference changed identifiers."""
+    """
+    Find source files outside the PR that reference changed identifiers or import changed modules.
+    Supports JS, TS, JSX, TSX, MJS, CJS, and Python.
+    """
     identifiers = extract_changed_identifiers(patches)
-    if not identifiers:
+    module_names = extract_module_names(changed_files)
+
+    if not identifiers and not module_names:
         return []
 
     try:
         tree = await get_repo_tree(client, owner, repo, ref)
     except Exception:
         return []
-
-    source_exts = (".js", ".jsx", ".ts", ".tsx", ".py")
-    skip_substrings = (
-        "node_modules/", "dist/", "build/", ".git/", ".venv/", "venv/",
-        "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
-    )
 
     changed_set = set(changed_files)
     candidates: List[str] = []
@@ -180,9 +176,9 @@ async def find_callers(
         path: str = item.get("path", "")
         if path in changed_set:
             continue
-        if any(skip in path for skip in skip_substrings):
+        if any(skip in path for skip in SKIP_SUBSTRINGS):
             continue
-        if path.lower().endswith(source_exts):
+        if path.lower().endswith(SOURCE_EXTS):
             candidates.append(path)
             if len(candidates) >= 60:
                 break
@@ -200,17 +196,15 @@ async def find_callers(
             except Exception:
                 return None
 
-            for ident in identifiers:
-                # Word-boundary check
-                pattern = rf"\b{re.escape(ident)}\b"
-                if re.search(pattern, content):
-                    lines = content.splitlines()[:200]
-                    truncated = "\n".join(lines)
-                    return ContextFile(
-                        filename=candidate_path,
-                        reason=f"references '{ident}'",
-                        content=truncated,
-                    )
+            reason = check_file_caller(content, identifiers, module_names)
+            if reason:
+                lines = content.splitlines()[:200]
+                truncated = "\n".join(lines)
+                return ContextFile(
+                    filename=candidate_path,
+                    reason=reason,
+                    content=truncated,
+                )
             return None
 
     tasks = [check_candidate(path) for path in candidates]
@@ -225,6 +219,79 @@ async def find_callers(
     return context_results[:5]
 
 
+async def find_definitions(
+    client: httpx.AsyncClient,
+    owner: str,
+    repo: str,
+    ref: str,
+    patches: List[str],
+    exclude_files: List[str],
+) -> List[ContextFile]:
+    """
+    Find source files outside the PR that define functions/classes/constants called by added code (callees).
+    Returns at most 3 files, 200 lines each.
+    """
+    called_names = extract_called_identifiers(patches)
+    if not called_names:
+        return []
+
+    try:
+        tree = await get_repo_tree(client, owner, repo, ref)
+    except Exception:
+        return []
+
+    excluded_set = set(exclude_files)
+    candidates: List[str] = []
+
+    for item in tree:
+        if item.get("type") != "blob":
+            continue
+        path: str = item.get("path", "")
+        if path in excluded_set:
+            continue
+        if any(skip in path for skip in SKIP_SUBSTRINGS):
+            continue
+        if path.lower().endswith(SOURCE_EXTS):
+            candidates.append(path)
+            if len(candidates) >= 60:
+                break
+
+    if not candidates:
+        return []
+
+    semaphore = asyncio.Semaphore(8)
+    results: List[ContextFile] = []
+
+    async def check_definition_candidate(candidate_path: str) -> Optional[ContextFile]:
+        async with semaphore:
+            try:
+                content, _ = await get_file_content(client, owner, repo, candidate_path, ref)
+            except Exception:
+                return None
+
+            for name in called_names:
+                if matches_definition(content, name):
+                    lines = content.splitlines()[:200]
+                    truncated = "\n".join(lines)
+                    return ContextFile(
+                        filename=candidate_path,
+                        reason=f"defines {name}, called by new code in this PR",
+                        content=truncated,
+                    )
+            return None
+
+    tasks = [check_definition_candidate(path) for path in candidates]
+    matches = await asyncio.gather(*tasks, return_exceptions=True)
+
+    for res in matches:
+        if isinstance(res, ContextFile):
+            results.append(res)
+            if len(results) >= 3:
+                break
+
+    return results[:3]
+
+
 async def create_ref(
     client: httpx.AsyncClient, owner: str, repo: str, branch_name: str, sha: str
 ) -> str:
@@ -237,7 +304,7 @@ async def create_ref(
 
     for _ in range(10):
         ref_payload = {"ref": f"refs/heads/{target_branch}", "sha": sha}
-        resp = await client.post(url, headers=headers, json=ref_payload)
+        resp = await client.post(url, headers=headers, json=ref_payload, timeout=HTTP_TIMEOUT)
         if resp.status_code in (200, 201):
             return target_branch
         if resp.status_code == 422:
@@ -262,9 +329,8 @@ async def commit_file(
     headers = get_github_headers()
     contents_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}"
 
-    # Check for existing sha on the target branch
     existing_sha: Optional[str] = None
-    check_resp = await client.get(contents_url, headers=headers, params={"ref": branch})
+    check_resp = await client.get(contents_url, headers=headers, params={"ref": branch}, timeout=HTTP_TIMEOUT)
     if check_resp.status_code == 200:
         existing_sha = check_resp.json().get("sha")
 
@@ -277,7 +343,7 @@ async def commit_file(
     if existing_sha:
         payload["sha"] = existing_sha
 
-    put_resp = await client.put(contents_url, headers=headers, json=payload)
+    put_resp = await client.put(contents_url, headers=headers, json=payload, timeout=HTTP_TIMEOUT)
     _handle_github_error(put_resp)
     data = put_resp.json()
     return data.get("commit", {}).get("sha", "")

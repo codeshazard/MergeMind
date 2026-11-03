@@ -80,6 +80,8 @@ class AnalysisModel(BaseModel):
     test_assertions: List[TestAssertion]
     integration_status: Literal['PENDING', 'BRANCH_CREATED', 'REJECTED'] = 'PENDING'
     integration_branch: Optional[str] = None
+    github_mergeable_state: Optional[str] = None
+    truncated: bool = False
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 ```
 
@@ -99,11 +101,18 @@ class AnalysisModel(BaseModel):
   ```
 - **Flow**:
   1. Extract `owner` and `repo` from `repo_url` (handle trailing slash and `.git`).
-  2. Fetch PR details using GitHub REST API (`GET /repos/{owner}/{repo}/pulls/{pull_number}`).
+  2. Fetch PR details using GitHub REST API (`GET /repos/{owner}/{repo}/pulls/{pull_number}`). If `mergeable` is null, retry up to 3 times with 1-second delay to retrieve `mergeable_state`.
   3. Fetch modified files and diff patches using GitHub REST API (`GET /repos/{owner}/{repo}/pulls/{pull_number}/files`).
-  4. **Caller-Context Extraction**: Extract changed identifiers from diffs, traverse repository tree (`GET /repos/{owner}/{repo}/git/trees/{base_sha}?recursive=1`), and fetch candidate source files outside the PR that reference these identifiers.
-  5. Aggregate patch strings and context files, then send to Gemini API (`google-genai`) with strict Pydantic JSON schema instructions.
-  6. Save the resulting payload to MongoDB `analyses` collection via Motor.
+  4. **Bidirectional Context Extraction**:
+     - **Caller-Context Extraction**: Extract changed identifiers from diffs, traverse repository tree (`GET /repos/{owner}/{repo}/git/trees/{base_sha}?recursive=1`), and fetch candidate source files outside the PR referencing these identifiers.
+     - **Callee-Context Extraction**: Extract called identifiers from added lines (`find_definitions`), locate definitions outside the PR on the base branch (cap 3 files, 200 lines each).
+     - Merge caller and callee context into `context_files` (deduplicate by filename, total cap 8).
+  5. **Ground-Truth Pre-Processing**: If `mergeable_state == "dirty"`, fetch full contents of PR files from both base and head branches (cap 5 files, 300 lines each) and pass both pairs to Gemini.
+  6. Send aggregated patches, context files, and `mergeable_state` to Gemini API (`google-genai`).
+  7. **Ground-Truth Post-Processing**:
+     - If `mergeable_state == "dirty"`, force `conflict_type = "TEXTUAL"` and `risk_score` at least `MEDIUM`.
+     - If `mergeable_state == "clean"` and AI reports `TEXTUAL`, downgrade to `SEMANTIC` (if semantic explanation exists) or `NONE`.
+  8. Save the resulting payload (including `github_mergeable_state` and `truncated`) to MongoDB `analyses` collection via Motor.
 - **Returns**: Persisted MongoDB analysis document including `context_files` and `resolved_files`.
 
 #### 2. `GET /api/history`
@@ -166,7 +175,7 @@ Your job:
    - "SEMANTIC": Independent, clean textual changes that break downstream assumptions (e.g., function parameter count/type changes, altered return structures, broken invariants).
    - "NONE": Clean, fully compatible changes.
 2. Formulate a plain-English explanation of the underlying problem.
-3. You are also given full contents of files NOT in the PR that call or import changed code. A change is SEMANTIC if it alters return-value meaning, parameters, or invariants that those files rely on, even if the PR's own tests would pass. Name the affected caller files and explain the reasoning in `explanation`. `resolved_files` must contain a complete, valid version of every file that needs to change, including caller files.
+3. You are also given full contents of files NOT in the PR that call or import changed code. A change is SEMANTIC if it alters return-value meaning, parameters, or invariants that those files rely on, even if the PR's own tests would pass. Name the affected caller files and explain the reasoning in `explanation`. Also check the reverse direction: new code in this PR may CALL functions defined elsewhere whose behavior or return semantics differ from what the new code assumes (for example a function that now applies a discount, a tax, or a unit conversion). Flag as SEMANTIC and name both files. `resolved_files` must contain a complete, valid version of every file that needs to change, including caller and callee files.
 4. Output 2 to 4 LLM-evaluated test verification checks indicating that the integration maintains integrity (these are synthesized indicative checks, not executed in runtime sandbox).
 
 Output MUST strictly follow the JSON schema.
@@ -217,5 +226,11 @@ Output MUST strictly follow the JSON schema.
   - `server/routes/integrate.py` (`POST /api/integrate`)
   - `server/routes/dashboard.py` (`GET /api/dashboard/stats`)
 
-### Phase 3: Frontend Interface & Workflows
-- [ ] Build interactive UI with side-by-side diffs, resolution review, health metrics, and one-click integration.
+### Phase 3: Frontend Interface & Workflows [DONE]
+- [x] Build interactive UI with side-by-side diffs, resolution review, health metrics, and one-click integration.
+
+### Phase 4A: Detection Upgrades & Hardening [IN PROGRESS]
+- [ ] Ground-truth textual conflicts: lazy `mergeable_state` retry, post-processing overrides for `dirty` / `clean`.
+- [ ] Bidirectional caller + callee context extraction (`find_definitions` matching called identifiers in added lines).
+- [ ] Prompt size capping, truncation detection flag, and resilient timeouts (httpx connect 5s, read 20s; Gemini 60s).
+- [ ] Structured request-id logging, clean error boundary propagation `{detail: "..."}`, and pytest unit tests.
