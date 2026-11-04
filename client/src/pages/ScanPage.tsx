@@ -8,14 +8,14 @@ import {
   RefreshCw,
   GitPullRequest,
   Calendar,
-  Copy,
-  Check,
   Sparkles,
+  GitMerge,
+  Code2,
+  ShieldCheck,
 } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
 import { getAnalysisId, type Analysis } from '../lib/types';
 import { parsePrInput } from '../lib/parsePr';
-import { DEMO_PR_PRESETS, type DemoPrPreset } from '../lib/constants';
 import { ConflictBadge, RiskBadge } from '../components/Badge';
 
 export const ScanPage: React.FC = () => {
@@ -26,7 +26,6 @@ export const ScanPage: React.FC = () => {
   const [progressStep, setProgressStep] = useState<string>('');
   const [recentScans, setRecentScans] = useState<Analysis[]>([]);
   const [recentLoading, setRecentLoading] = useState(true);
-  const [copiedPresetId, setCopiedPresetId] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   useEffect(() => {
@@ -47,20 +46,6 @@ export const ScanPage: React.FC = () => {
       timerRef.current.forEach(clearTimeout);
     };
   }, []);
-
-  const handleCopyUrl = (preset: DemoPrPreset, e: React.MouseEvent) => {
-    e.stopPropagation();
-    navigator.clipboard.writeText(preset.url);
-    setCopiedPresetId(preset.id);
-    setTimeout(() => {
-      setCopiedPresetId(null);
-    }, 2000);
-  };
-
-  const handleSelectPreset = (url: string) => {
-    setInputVal(url);
-    setError(null);
-  };
 
   const handleScan = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -110,6 +95,10 @@ export const ScanPage: React.FC = () => {
         setError('An unexpected error occurred during scan.');
       }
     }
+  };
+
+  const handleExploreSample = () => {
+    navigate('/analysis/sample');
   };
 
   return (
@@ -197,62 +186,90 @@ export const ScanPage: React.FC = () => {
         </div>
       </form>
 
-      {/* Preset Demo PRs Shortcut List */}
-      <div className="mt-4 p-4 rounded-xl border border-zinc-800/80 bg-zinc-900/40 space-y-3">
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
-            <Sparkles className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" />
-            <span>Preset Demo PR Shortcuts</span>
-          </span>
-          <span className="text-[11px] text-zinc-500">Click to load or copy URL</span>
+      {/* Explore Sample Inspection Action Banner */}
+      <div className="mt-3 flex items-center justify-between p-3.5 rounded-xl border border-amber-500/20 bg-amber-500/5 backdrop-blur-sm">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="p-1.5 rounded-md bg-amber-500/10 text-amber-400 shrink-0">
+            <Sparkles className="w-4 h-4" aria-hidden="true" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-zinc-200 truncate">
+              Want to test the full analysis view immediately without entering a live URL?
+            </p>
+            <p className="text-[11px] text-zinc-400">
+              Demo 1: 10% cart discount breaking downstream $50 free-shipping eligibility threshold.
+            </p>
+          </div>
         </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-          {DEMO_PR_PRESETS.map((preset) => {
-            const isCopied = copiedPresetId === preset.id;
-            return (
-              <div
-                key={preset.id}
-                onClick={() => handleSelectPreset(preset.url)}
-                className="group relative p-3 rounded-lg border border-zinc-800/80 bg-zinc-950/60 hover:bg-zinc-900 hover:border-zinc-700 transition-all cursor-pointer flex flex-col justify-between"
-              >
-                <div>
-                  <div className="flex items-center justify-between gap-1 mb-1">
-                    <span className="text-xs font-semibold text-zinc-200 font-mono group-hover:text-white truncate">
-                      {preset.label}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={(e) => handleCopyUrl(preset, e)}
-                      title="Copy PR URL"
-                      className="p-1 rounded bg-zinc-800/80 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-100 transition-colors shrink-0 focus-ring cursor-pointer"
-                      aria-label={`Copy ${preset.label} URL`}
-                    >
-                      {isCopied ? (
-                        <Check className="w-3 h-3 text-emerald-400" aria-hidden="true" />
-                      ) : (
-                        <Copy className="w-3 h-3" aria-hidden="true" />
-                      )}
-                    </button>
-                  </div>
-                  <div className="text-[11px] text-zinc-400 leading-snug line-clamp-2">
-                    {preset.description}
-                  </div>
-                </div>
-
-                <div className="mt-2.5 flex items-center justify-between text-[10px]">
-                  <span className="px-1.5 py-0.5 rounded border border-zinc-700/60 bg-zinc-800/60 text-zinc-300 font-mono">
-                    {preset.badge}
-                  </span>
-                  <span className="text-zinc-500 group-hover:text-zinc-300 transition-colors flex items-center gap-0.5">
-                    {isCopied ? 'Copied!' : 'Use PR \u2192'}
-                  </span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+        <button
+          type="button"
+          onClick={handleExploreSample}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 text-zinc-100 text-xs font-semibold transition-colors focus-ring shrink-0 cursor-pointer ml-3"
+        >
+          <span>Explore Sample Inspection</span>
+          <ArrowRight className="w-3.5 h-3.5 text-zinc-400" aria-hidden="true" />
+        </button>
       </div>
+
+      {/* Engine Capabilities 3-Card Overview */}
+      <section className="mt-8 space-y-3" aria-labelledby="capabilities-heading">
+        <div className="flex items-center justify-between">
+          <h2 id="capabilities-heading" className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+            Engine Capabilities
+          </h2>
+          <span className="text-[11px] text-zinc-500 font-mono">Dual-Mode Detection Engine</span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {/* Card 1: Syntactic Collision */}
+          <div className="p-4 rounded-xl border border-zinc-800/80 bg-zinc-900/40 space-y-2 hover:border-zinc-700/80 transition-colors">
+            <div className="flex items-center justify-between">
+              <div className="p-2 rounded-lg bg-rose-500/10 text-rose-400">
+                <GitMerge className="w-4 h-4" aria-hidden="true" />
+              </div>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded border border-rose-500/20 bg-rose-500/10 text-rose-300">
+                Line-Level
+              </span>
+            </div>
+            <h3 className="text-sm font-semibold text-zinc-100">Syntactic Collision</h3>
+            <p className="text-xs text-zinc-400 leading-relaxed">
+              Detects direct line collisions, conflict markers, and lazy GitHub mergeability states between base and head branches.
+            </p>
+          </div>
+
+          {/* Card 2: Semantic Impact */}
+          <div className="p-4 rounded-xl border border-zinc-800/80 bg-zinc-900/40 space-y-2 hover:border-zinc-700/80 transition-colors">
+            <div className="flex items-center justify-between">
+              <div className="p-2 rounded-lg bg-amber-500/10 text-amber-400">
+                <Code2 className="w-4 h-4" aria-hidden="true" />
+              </div>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded border border-amber-500/20 bg-amber-500/10 text-amber-300">
+                Caller AST
+              </span>
+            </div>
+            <h3 className="text-sm font-semibold text-zinc-100">Semantic Impact</h3>
+            <p className="text-xs text-zinc-400 leading-relaxed">
+              Traverses repo trees to locate external callers and definitions impacted by changed parameters, altered returns, or broken invariants.
+            </p>
+          </div>
+
+          {/* Card 3: Autonomous Remediation */}
+          <div className="p-4 rounded-xl border border-zinc-800/80 bg-zinc-900/40 space-y-2 hover:border-zinc-700/80 transition-colors">
+            <div className="flex items-center justify-between">
+              <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
+                <ShieldCheck className="w-4 h-4" aria-hidden="true" />
+              </div>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded border border-emerald-500/20 bg-emerald-500/10 text-emerald-300">
+                One-Click
+              </span>
+            </div>
+            <h3 className="text-sm font-semibold text-zinc-100">Autonomous Remediation</h3>
+            <p className="text-xs text-zinc-400 leading-relaxed">
+              Generates integrated resolutions with indicative verification assertions and commits patches directly to a new GitHub branch.
+            </p>
+          </div>
+        </div>
+      </section>
 
       {/* Recent Scans Section */}
       <section className="mt-12 border-t border-zinc-800/80 pt-8" aria-labelledby="recent-heading">
@@ -275,7 +292,7 @@ export const ScanPage: React.FC = () => {
         ) : recentScans.length === 0 ? (
           <div className="p-6 rounded-lg border border-dashed border-zinc-800 text-center">
             <p className="text-xs text-zinc-500">
-              No PR scans performed yet. Enter a GitHub PR above or try a demo shortcut to start.
+              No PR scans performed yet. Enter a GitHub PR above or explore the sample inspection to start.
             </p>
           </div>
         ) : (

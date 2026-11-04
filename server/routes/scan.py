@@ -141,14 +141,12 @@ async def scan_pull_request(
         resolved_files=ai_result.resolved_files,
     )
 
-    # Populate original_content for resolved files (if conflicts exist)
-    changed_filenames_set = set(changed_filenames)
+    # Populate original_content for resolved files from target branch (base_sha)
     if final_resolved_files:
         async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
             for rf in final_resolved_files:
-                target_ref = head_ref if rf.filename in changed_filenames_set else base_sha
                 try:
-                    orig_text, _ = await get_file_content(client, owner, repo, rf.filename, target_ref)
+                    orig_text, _ = await get_file_content(client, owner, repo, rf.filename, base_sha)
                     rf.original_content = orig_text if orig_text else None
                 except Exception:
                     rf.original_content = None

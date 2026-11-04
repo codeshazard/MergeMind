@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
 import type { Analysis, IntegrateResponse } from '../lib/types';
+import { SAMPLE_ANALYSIS_PAYLOAD } from '../lib/constants';
 import { ConflictBadge, RiskBadge, IntegrationBadge } from '../components/Badge';
 
 export const ResultPage: React.FC = () => {
@@ -53,7 +54,10 @@ export const ResultPage: React.FC = () => {
   const [copiedSha, setCopiedSha] = useState(false);
 
   const isValidObjectId = (val?: string): boolean => {
-    return Boolean(val && /^[0-9a-fA-F]{24}$/.test(val.trim()));
+    if (!val) return false;
+    const trimmed = val.trim();
+    if (trimmed === 'sample' || trimmed === 'demo') return true;
+    return Boolean(/^[0-9a-fA-F]{24}$/.test(trimmed));
   };
 
   const loadAnalysis = useCallback(() => {
@@ -64,12 +68,20 @@ export const ResultPage: React.FC = () => {
       return;
     }
 
+    const cleanId = id.trim();
+    if (cleanId === 'sample' || cleanId === 'demo' || cleanId === SAMPLE_ANALYSIS_PAYLOAD._id) {
+      setAnalysis(SAMPLE_ANALYSIS_PAYLOAD);
+      setLoading(false);
+      setIsNotFound(false);
+      return;
+    }
+
     setLoading(true);
     setError(null);
     setIsNotFound(false);
     setNotFoundMessage(null);
 
-    api.getAnalysis(id.trim())
+    api.getAnalysis(cleanId)
       .then((data) => {
         setAnalysis(data);
         setLoading(false);
@@ -105,6 +117,30 @@ export const ResultPage: React.FC = () => {
     setError(null);
 
     const resolved = analysis.resolved_files ?? [];
+    const cleanId = id.trim();
+
+    if (cleanId === 'sample' || cleanId === 'demo') {
+      setTimeout(() => {
+        setIntegrating(false);
+        setShowConfirm(false);
+        setIntegrationResult({
+          success: true,
+          branch: 'mergemind/patch-pr-1',
+          commit_sha: 'e7a1b2c3d4e5f6',
+          files_committed: resolved.map((f) => f.filename),
+        });
+        setAnalysis((prev) =>
+          prev
+            ? {
+                ...prev,
+                integration_status: 'BRANCH_CREATED',
+                integration_branch: 'mergemind/patch-pr-1',
+              }
+            : null
+        );
+      }, 1000);
+      return;
+    }
 
     try {
       const res = await api.integrate(id.trim());
@@ -513,7 +549,9 @@ export const ResultPage: React.FC = () => {
                 </div>
 
                 <div className="text-zinc-500 hidden sm:block">
-                  {originalContent !== null ? 'Original vs MergeMind Clean Resolution' : 'Clean Resolution Only'}
+                  {originalContent !== null
+                    ? `Target Branch (${analysis.base_branch || 'main'}) vs Integrated Resolution`
+                    : 'Clean Resolution Only'}
                 </div>
               </div>
 
@@ -525,7 +563,7 @@ export const ResultPage: React.FC = () => {
                     splitView={true}
                     useDarkTheme={true}
                     styles={diffCustomStyles}
-                    leftTitle="Original Source"
+                    leftTitle={`Target Branch (${analysis.base_branch || 'main'})`}
                     rightTitle="MergeMind Integrated Resolution"
                   />
                 ) : (
